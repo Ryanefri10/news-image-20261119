@@ -1,62 +1,64 @@
-"""Publish the 19 November 2026 front page as the competition entry image.
+"""Ship the 19 November 2026 front page as this entry's image.
 
-The finished page sits next to this script as entry.png: a newspaper
-front page for Thursday 19 November 2026, built from that day's news.
-This script does nothing creative — it checks the vendored file is the
-exact page it should be, then places an identical copy at the path the
-grader reads. Standard library only, no network, no third-party code.
+Next to this script sits entry.png: the front page for Thursday
+19 November 2026, composed from that day's verified news. All this
+program does is confirm the vendored page is exactly the one it
+should be, then drop a byte-identical copy where the grader looks.
+Python standard library only; no network, no third-party code, no
+drawing at run time.
 """
 
-from hashlib import file_digest
-from os import environ
-from pathlib import Path
+import hashlib
+import os
+import struct
 
-PAGE = Path(__file__).resolve().parent / "entry.png"
-# sha256 of the composed 19 November 2026 front page; the copy is
-# verified against it so a corrupted or swapped vendored file fails
-# loudly instead of entering the wrong image.
-EXPECTED_DIGEST = "5197959aab5ee48a228f9a722727edd45b710a67a616a618912bd2af381bf1f1"
-SIZE_LIMIT = 1024 * 1024
-EDGE_LIMIT = 1024
-PNG_SIGNATURE = bytes((0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A))
+HERE = os.path.dirname(os.path.abspath(__file__))
+PAGE_PATH = os.path.join(HERE, "entry.png")
 
-
-def digest_of(path):
-    with path.open("rb") as handle:
-        return file_digest(handle, "sha256").hexdigest()
+# sha256 of the composed 19 November 2026 front page. The copy is
+# checked against it, so a damaged or swapped vendored file fails
+# loudly instead of entering the wrong picture.
+PAGE_SHA256 = "5197959aab5ee48a228f9a722727edd45b710a67a616a618912bd2af381bf1f1"
+MAX_BYTES = 1024 * 1024
+MAX_EDGE = 1024
+PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
 
-def dimensions_of(path):
-    blob = path.read_bytes()
-    if blob[:8] != PNG_SIGNATURE:
-        raise ValueError(f"{path.name} is not a PNG file")
+def read_page():
+    with open(PAGE_PATH, "rb") as handle:
+        return handle.read()
+
+
+def check_page(blob):
+    """Raise unless blob is the expected whole 1024x1024 PNG."""
+    if len(blob) > MAX_BYTES:
+        raise ValueError("entry.png is larger than 1 MiB")
+    if hashlib.sha256(blob).hexdigest() != PAGE_SHA256:
+        raise ValueError("vendored entry.png failed its digest check")
+    if blob[:8] != PNG_MAGIC:
+        raise ValueError("entry.png is not a PNG file")
     if blob[12:16] != b"IHDR":
-        raise ValueError(f"{path.name} has no IHDR chunk")
-    width = int.from_bytes(blob[16:20], "big")
-    height = int.from_bytes(blob[20:24], "big")
+        raise ValueError("entry.png has no IHDR chunk")
+    width, height = struct.unpack(">II", blob[16:24])
+    if width > MAX_EDGE or height > MAX_EDGE:
+        raise ValueError("entry.png is larger than 1024x1024")
     return width, height
 
 
-def publish_entry():
-    if digest_of(PAGE) != EXPECTED_DIGEST:
-        raise ValueError("vendored entry.png failed its digest check")
-    width, height = dimensions_of(PAGE)
-    if width > EDGE_LIMIT or height > EDGE_LIMIT:
-        raise ValueError("entry.png is larger than 1024x1024")
-    if PAGE.stat().st_size > SIZE_LIMIT:
-        raise ValueError("entry.png is larger than 1 MiB")
-    out_dir = Path(environ.get("MAKEFUN_OUTPUT_DIR", "/output"))
-    out_dir.mkdir(parents=True, exist_ok=True)
-    target = out_dir / "entry.png"
-    target.write_bytes(PAGE.read_bytes())
-    if digest_of(target) != EXPECTED_DIGEST:
+def main():
+    blob = read_page()
+    width, height = check_page(blob)
+    out_dir = os.environ.get("MAKEFUN_OUTPUT_DIR", "/output")
+    os.makedirs(out_dir, exist_ok=True)
+    target = os.path.join(out_dir, "entry.png")
+    with open(target, "wb") as handle:
+        handle.write(blob)
+    with open(target, "rb") as handle:
+        copied = handle.read()
+    if copied != blob:
         raise ValueError("the copied entry.png does not match the vendored page")
-    copied_width, copied_height = dimensions_of(target)
-    if (copied_width, copied_height) != (width, height):
-        raise ValueError("the copied entry.png has different dimensions")
-    size = target.stat().st_size
-    print(f"entry.png -> {target} ({size} bytes, {width}x{height})")
+    print("entry.png -> %s (%d bytes, %dx%d)" % (target, len(copied), width, height))
 
 
 if __name__ == "__main__":
-    publish_entry()
+    main()
